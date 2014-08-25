@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<confInfoSegment operation="de">
+<application id="APP_166" type="webApp" name="HelloJSP">
+<upstream>
+ upstream  APP_166_HelloJSP  {
+
+ server  192.168.3.232:5000;
+}
+</upstream>
+<location>location /APP_166_HelloJSP/ {
+proxy_pass http://APP_166_HelloJSP;
+} 
+</location>
+</application>
+<application id="WS_167" type="webService" name="ConvertMoney">
+<upstream>upstream WS_167_ConvertMoney {
+
+ server  192.168.3.232:5003;
+}
+</upstream>
+<location>location ~*  /axis2/services/WS_167_ConvertMoney(.*)$  {
+rewrite  /axis2/services/WS_167_ConvertMoney(.*)$  /axis2/services/ConvertMoney$1  break;
+proxy_pass http://WS_167_ConvertMoney;
+}
+</location>
+</application>
+<application id="WS_168" type="webService" name="ConvertMoney">
+<upstream>upstream WS_168_ConvertMoney {
+
+ server  192.168.3.232:5006;
+}
+</upstream>
+<location>location ~*  /axis2/services/WS_168_ConvertMoney(.*)$  {
+rewrite  /axis2/services/WS_168_ConvertMoney(.*)$  /axis2/services/ConvertMoney$1  break;
+proxy_pass http://WS_168_ConvertMoney;
+}
+</location>
+</application>
+</confInfoSegment>

@@ -4,12 +4,31 @@
  * Copyright (C) Nginx, Inc.
  */
 
-
+//--DRPS
+#include <signal.h> 
+#include <unistd.h>
+#include <stdio.h>  
+#include <stdlib.h>   
+#include <malloc.h> 
+#include <sys/stat.h> 
+#include <sys/socket.h>  
+#include <sys/types.h>    // for socket 
+#include <netinet/in.h>   // for sockaddr_in
+#include <string.h>   
+#include <pthread.h>
+#include <sys/errno.h>  
+#include <libxml/parser.h>  //for xml parsing
+#include <libxml/tree.h>
+#include <iconv.h>
+#include <sys/ipc.h>
+//--
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <nginx.h>
 
-
+//--DRPS
+#include "confServer.h"
+//--
 static ngx_int_t ngx_add_inherited_sockets(ngx_cycle_t *cycle);
 static ngx_int_t ngx_get_options(int argc, char *const *argv);
 static ngx_int_t ngx_process_options(ngx_cycle_t *cycle);
@@ -197,6 +216,94 @@ static char        *ngx_signal;
 
 static char **ngx_os_environ;
 
+//----------------------------DRPS 201308----------------------------------//
+
+FILE *fpsock = NULL;	//-- for closing serverPort, create sockfd.ini
+
+FILE *fpfork = NULL;	//-- for executing fork only once
+
+int forkFlag = 0;	//-- 0: can fork  1: cannot fork  2: clear
+
+void process_sig(int signo)    //enable     2014-7-21-problem repeated counting
+{
+	if( signo == 39 )
+	{
+		FILE* test = fopen("/usr/local/nginx-1.4.2-file/test.txt","w");
+		//int fd_w = open("/usr/local/nginx-1.4.2-file/logs/invokeCounts.log",O_WRONLY);
+		int fd_r = open("/usr/local/nginx-1.4.2-file/undeploy.txt",O_RDONLY);
+
+		//flock(fd_w,LOCK_EX);
+
+		flock(fd_r,LOCK_EX);
+
+		FILE* count = fopen("/usr/local/nginx-1.4.2-file/logs/invokeCounts.log","r");
+		if(count==NULL)
+		{
+			fprintf(test,"%s\n","open invokeCounts.log failed!");
+			return;
+		}
+		fseek(count,0L,SEEK_SET);
+
+		FILE* un = fopen("/usr/local/nginx-1.4.2-file/undeploy.txt","r");
+		if(un==NULL)
+		{
+			fprintf(test,"%s\n","open undeploy failed!");
+			return;
+		}
+
+		FILE* temp = fopen("/usr/local/nginx-1.4.2-file/temp.txt","w");
+
+		char buffer[1000]; char buffer_1[1000];
+		memset(buffer,0,sizeof(buffer));
+		memset(buffer_1,0,sizeof(buffer_1));
+
+		int flag = 0;
+
+		while(fscanf(count,"%s",buffer)!=EOF)
+		{
+			flag = 0;
+			fseek(un,0L,SEEK_SET);
+			while(fscanf(un,"%s",buffer_1)!=EOF)
+			{
+				fprintf(test,"%s - %s\n",buffer,buffer_1);
+				if( !strncmp(buffer,buffer_1,strlen(buffer_1)) )
+				{
+					flag = 1;
+					break;
+				}
+			}
+			if(!flag)
+				fprintf(temp,"%s\n",buffer);
+		}
+		
+		fclose(test);
+		fclose(un);
+		fclose(count);
+		fclose(temp);
+
+		FILE* update = fopen("/usr/local/nginx-1.4.2-file/logs/invokeCounts.log","w");
+		temp = fopen("/usr/local/nginx-1.4.2-file/temp.txt","r");
+
+		//fseek(temp,0L,SEEK_SET);
+
+		char ch;
+		while(  (ch=fgetc(temp))!=EOF )
+		{	
+			fputc(ch,update);
+		}
+
+		fclose(temp);
+		fclose(update);
+
+		flock(fd_r,LOCK_UN);
+
+		//flock(fd_w,LOCK_UN);		
+		
+		close(fd_r);
+
+	}
+}
+//-------------------------------------------------------------------------//
 
 int ngx_cdecl
 main(int argc, char *const *argv)
@@ -207,6 +314,63 @@ main(int argc, char *const *argv)
     ngx_core_conf_t  *ccf;
 
     ngx_debug_init();
+	
+	//----------------------------DRPS 201308----------------------------------//
+
+    signal(SIGRTMIN+5,process_sig);		//enable     2014-7-21-problem repeated counting
+
+    if((fpsock = fopen("/usr/local/nginx-1.4.2-file/sockfd.ini","r")) == NULL)
+    {
+		if((fpsock = fopen("/usr/local/nginx-1.4.2-file/sockfd.ini","w+")) == NULL)
+		{
+			printf("Cannot create sockfd.ini !\n");
+			exit(0);
+		}
+		fprintf(fpsock, "%d", 0);// 0: donnot close
+		fclose(fpsock);
+	}
+	else 
+	{
+		fclose(fpsock);
+		if((fpsock = fopen("/usr/local/nginx-1.4.2-file/sockfd.ini","w+")) == NULL)
+		{
+			printf("Cannot create sockfd.ini !\n");
+			exit(0);
+		}
+		fprintf(fpsock, "%d", 0);// 0: donnot close
+		fclose(fpsock);
+	}
+
+    if((fpfork = fopen("/usr/local/nginx-1.4.2-file/forkonce.ini","r+")) == NULL)
+    {
+		if((fpfork = fopen("/usr/local/nginx-1.4.2-file/forkonce.ini","w+")) == NULL)
+		{
+			printf("Cannot create forkonce.ini !\n");
+			exit(0);
+		}
+		fprintf(fpfork, "%d", 0);// 0: can fork  1: cannot fork  2: clear
+		fclose(fpfork);
+    }
+    else 
+    {
+		fscanf(fpfork, "%d", &forkFlag);
+		if(forkFlag == 1)
+		{
+			fclose(fpfork);
+		}
+		if(forkFlag == 2)
+		{
+			fclose(fpfork);
+			if((fpfork = fopen("/usr/local/nginx-1.4.2-file/forkonce.ini","w")) == NULL)
+			{
+				printf("Cannot create forkonce.ini !\n");
+				exit(0);
+			}
+			fprintf(fpfork, "%d", 0);
+			fclose(fpfork);	
+		}		
+    }
+//-------------------------------------------------------------------------//
 
     if (ngx_strerror_init() != NGX_OK) {
         return 1;
@@ -674,6 +838,10 @@ ngx_get_options(int argc, char *const *argv)
 {
     u_char     *p;
     ngx_int_t   i;
+	
+//--DRPS	
+	pid_t fpid;
+//--
 
     for (i = 1; i < argc; i++) {
 
@@ -726,6 +894,47 @@ ngx_get_options(int argc, char *const *argv)
                 return NGX_ERROR;
 
             case 'c':
+			//----------------------------DRPS 201308----------------------------------/
+				if((fpfork = fopen("/usr/local/nginx-1.4.2-file/forkonce.ini","r")) == NULL)
+				{
+					printf("forkonce.ini not exists !\n");
+					exit(0);
+				}
+				else
+				{
+					fscanf(fpfork, "%d", &forkFlag);
+					if(forkFlag == 0 )
+					{
+						fclose(fpfork);	
+						fpid = fork();
+						
+						//save process id of myServer
+						if( ((int)fpid) != 0 ) 
+         				{
+            				FILE* out = fopen("/usr/local/nginx-1.4.2-file/pid","w+");
+            				fprintf(out,"%d",(int)fpid);
+            				fclose(out);
+            			}
+						if (fpid < 0)
+						{	
+							printf("error in fork!");
+						}
+						else if (fpid == 0) 
+						{
+							printf("invoke myServer()\n");	
+							myServer();	
+							return 0;
+						}
+						if((fpfork = fopen("/usr/local/nginx-1.4.2-file/forkonce.ini","w")) == NULL)
+						{
+							printf("cannot write 1 in forkonce.ini !\n");
+							exit(0);
+						}
+						fprintf(fpfork, "%d", 1);
+					}
+					fclose(fpfork);		
+				}
+//-------------------------------------------------------------------------//
                 if (*p) {
                     ngx_conf_file = p;
                     goto next;
@@ -770,6 +979,76 @@ ngx_get_options(int argc, char *const *argv)
                     || ngx_strcmp(ngx_signal, "reopen") == 0
                     || ngx_strcmp(ngx_signal, "reload") == 0)
                 {
+				//----------------------------DRPS 201308----------------------------------//
+		    		if(ngx_strcmp(ngx_signal, "stop") == 0)
+		   			{
+						//some operations to release resources
+                        FILE* log = fopen("/usr/local/nginx-1.4.2-file/logs/invokeCounts.log","w");
+                        fclose(log);
+
+                        //get process id of myServer
+                  		int Pid;
+                  		FILE* in = fopen("/usr/local/nginx-1.4.2-file/pid","r");
+                  		if( in == NULL ) printf("open pid failed!");
+                  		fscanf(in,"%d",&Pid);	
+                  		fclose(in);			
+                  			
+                        //signal to save configuration
+                  		if( kill(Pid,SIGUSR1) == -1 )
+                  		{
+                  			printf("send sig failed!");
+                  		}			
+
+                        //delete messageQueue
+                        int msgid = msgget(123,IPC_CREAT|0666);
+                        if( msgctl(msgid,IPC_RMID,NULL))
+                        {
+                          printf("delete msg_queue_123 failed\n");
+                        }
+                        else printf("msg_queue_123 deleted\n");
+
+                        int msgID = msgget(456,IPC_CREAT|0666);
+                        if( msgctl(msgID,IPC_RMID,NULL))
+                        {
+                          printf("delete msg_queue_456 failed\n");
+                        }
+                        else printf("msg_queue_456 deleted\n");
+
+                        //delete semaphore
+                        int semID = semget(ftok("/usr/local/nginx-1.4.2-file/applicationList.xml",'a'),0,IPC_CREAT|0666);
+                        if( semctl(semID,0,IPC_RMID) == -1 )
+                          printf("delete sem failed!\n");
+                        else printf("semphore deleted\n");
+
+						// stop executes once, place fpfork clear here.
+						if((fpfork = fopen("/usr/local/nginx-1.4.2-file/forkonce.ini","r")) == NULL)
+						{
+							printf("Cannot open forkonce.ini !\n");
+							exit(0);
+						}
+						fscanf(fpfork, "%d", &forkFlag);
+	
+						if(forkFlag == 1)
+						{
+							fclose(fpfork);
+							if((fpfork = fopen("/usr/local/nginx-1.4.2-file/forkonce.ini","w")) == NULL)
+							{
+								printf("Cannot create forkonce.ini !\n");
+								exit(0);
+							}
+							fprintf(fpfork, "%d", 2);
+						}
+						fclose(fpfork);	
+			
+						if((fpsock = fopen("/usr/local/nginx-1.4.2-file/sockfd.ini","w+")) == NULL)
+						{
+							printf("sockfd.ini not exists !\n");
+							exit(0);
+						}
+						fprintf(fpsock, "%d", 1);	// 1: to close
+						fclose(fpsock);	
+					}
+//--------------------------------------------------------------------------//
                     ngx_process = NGX_PROCESS_SIGNALLER;
                     goto next;
                 }
